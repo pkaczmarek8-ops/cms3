@@ -1,0 +1,64 @@
+services:
+  db:
+    image: mariadb:10.11
+    restart: unless-stopped # [DODANO] Automatyczne podnoszenie kontenera po restarcie Dockera/Codespace
+    ports:
+      - "8080:80" # [POPRAWIONO] Poprawne wcięcie YAML
+    environment:
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wp
+      MARIADB_PASSWORD: wp_haslo_lab
+      MARIADB_ROOT_PASSWORD: root_haslo_lab
+    volumes:
+      - ./db_data:/var/lib/mysql # [ZMIANA] Bind mount w workspace zamiast wolumenu Dockera
+
+  wordpress:
+    image: wordpress:latest
+    restart: unless-stopped # [DODANO] Automatyczne podnoszenie kontenera
+    network_mode: "service:db"
+    environment:
+      WORDPRESS_DB_HOST: 127.0.0.1:3306
+      WORDPRESS_DB_USER: wp
+      WORDPRESS_DB_PASSWORD: wp_haslo_lab
+      WORDPRESS_DB_NAME: wordpress
+      CODESPACE_NAME: ${CODESPACE_NAME}
+      PF_DOMAIN: ${GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN:-app.github.dev} # [ZMIANA] Fallback domeny Codespaces
+      WORDPRESS_CONFIG_EXTRA: | # [ZMIANA] Jednorazowe define(), filtracja localhost i nadpisanie HTTP_HOST
+        define('FS_METHOD', 'direct');
+        define('WPLANG', 'pl_PL');
+
+        $$forwarded = isset($$_SERVER['HTTP_X_FORWARDED_HOST']) ? trim(explode(',', $$_SERVER['HTTP_X_FORWARDED_HOST'])[0]) : '';
+        $$forwarded_host = $$forwarded ? strtolower(explode(':', $$forwarded)[0]) : '';
+        $$cs_name = getenv('CODESPACE_NAME');
+        $$pf_domain = getenv('PF_DOMAIN') ?: 'app.github.dev';
+
+        if ($$forwarded && !in_array($$forwarded_host, ['localhost', '127.0.0.1'], true)) {
+          $$host = $$forwarded;
+        } elseif ($$cs_name) {
+          $$host = $$cs_name . '-8080.' . $$pf_domain;
+        } else {
+          $$host = $$_SERVER['HTTP_HOST'] ?? 'localhost:8080';
+        }
+
+        $$is_https = (!empty($$_SERVER['HTTP_X_FORWARDED_PROTO']) && $$_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') || !empty($$cs_name);
+        $$scheme = $$is_https ? 'https' : 'http';
+
+        $$_SERVER['HTTP_HOST'] = $$host;
+        if ($$is_https) {
+          $$_SERVER['HTTPS'] = 'on';
+          $$_SERVER['SERVER_PORT'] = 443;
+        }
+
+        if (!defined('WP_HOME')) {
+          define('WP_HOME', $$scheme . '://' . $$host);
+        }
+        if (!defined('WP_SITEURL')) {
+          define('WP_SITEURL', $$scheme . '://' . $$host);
+        }
+        if ($$is_https && !defined('FORCE_SSL_ADMIN')) {
+          define('FORCE_SSL_ADMIN', true);
+        }
+    volumes:
+      - ./wp_data:/var/www/html # [DODANO] Trwały zapis plików WP (wtyczki, motywy, uploady, wp-config.php)
+    depends_on:
+      - db # [POPRAWIONO] Poprawne wcięcie YAML
